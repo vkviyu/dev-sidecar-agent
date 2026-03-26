@@ -1,0 +1,388 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Dev-Sidecar Agent Dashboard</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header class="header">
+      <div class="header-left">
+        <span class="logo">&#9670;</span>
+        <h1>Dev-Sidecar Agent</h1>
+      </div>
+      <div class="header-right">
+        <label class="auto-refresh-label">
+          <input type="checkbox" id="autoRefresh" checked />
+          Auto Refresh
+        </label>
+        <input
+          type="text"
+          id="globalTraceId"
+          placeholder="Filter by Trace ID..."
+          class="trace-filter"
+        />
+      </div>
+    </header>
+
+    <nav class="tabs">
+      <button class="tab active" data-tab="traffic">Traffic (L7)</button>
+      <button class="tab" data-tab="logs">Logs</button>
+      <button class="tab" data-tab="mapr">Map Remote</button>
+      <button class="tab" data-tab="marked">Marked</button>
+    </nav>
+
+    <main class="content">
+      <!-- Traffic Tab -->
+      <div id="tab-traffic" class="tab-panel active">
+        <div class="toolbar">
+          <span class="record-count" id="trafficCount">0 records</span>
+        </div>
+        <div class="table-wrapper">
+          <table id="trafficTable">
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Method</th>
+                <th>URL</th>
+                <th>Status</th>
+                <th>Duration</th>
+                <th>Trace ID</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <!-- Traffic Detail Panel -->
+        <div
+          class="resize-handle hidden"
+          id="trafficDetailResize"
+          data-panel="trafficDetail"
+        ></div>
+        <div id="trafficDetail" class="detail-panel hidden">
+          <div class="detail-body detail-split">
+            <button
+              class="detail-float-close"
+              onclick="closeDetail('trafficDetail')"
+            >
+              &times;
+            </button>
+            <!-- Request 半区 -->
+            <div class="detail-pane">
+              <div class="detail-pane-tabs">
+                <button
+                  class="pane-tab active"
+                  data-pane-target="trafficReqHeaders"
+                >
+                  Headers
+                </button>
+                <button class="pane-tab" data-pane-target="trafficReqBody">
+                  Body
+                </button>
+                <div class="body-view-toggle hidden" id="trafficReqBodyToggle">
+                  <button class="view-btn active" data-mode="auto">Auto</button>
+                  <button class="view-btn" data-mode="text">Text</button>
+                  <button class="view-btn" data-mode="hex">Hex</button>
+                </div>
+              </div>
+              <div class="detail-pane-content">
+                <pre id="trafficReqHeaders" class="pane-content active"></pre>
+                <pre id="trafficReqBody" class="pane-content"></pre>
+              </div>
+            </div>
+            <div class="detail-split-divider"></div>
+            <!-- Response 半区 -->
+            <div class="detail-pane">
+              <div class="detail-pane-tabs">
+                <button
+                  class="pane-tab active"
+                  data-pane-target="trafficRespHeaders"
+                >
+                  Headers
+                </button>
+                <button class="pane-tab" data-pane-target="trafficRespBody">
+                  Body
+                </button>
+                <div class="body-view-toggle hidden" id="trafficRespBodyToggle">
+                  <button class="view-btn active" data-mode="auto">Auto</button>
+                  <button class="view-btn" data-mode="text">Text</button>
+                  <button class="view-btn" data-mode="hex">Hex</button>
+                </div>
+              </div>
+              <div class="detail-pane-content">
+                <pre id="trafficRespHeaders" class="pane-content active"></pre>
+                <pre id="trafficRespBody" class="pane-content"></pre>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Logs Tab -->
+      <div id="tab-logs" class="tab-panel">
+        <div class="toolbar">
+          <span class="record-count" id="logsCount">0 entries</span>
+        </div>
+        <div class="table-wrapper">
+          <table id="logsTable">
+            <thead>
+              <tr>
+                <th>Timestamp</th>
+                <th>Level</th>
+                <th>Trace ID</th>
+                <th>Message</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Map Remote Tab -->
+      <div id="tab-mapr" class="tab-panel">
+        <div class="toolbar">
+          <span class="record-count" id="maprCount">0 rules</span>
+          <button class="btn-add" id="btnAddRule">+ Add Rule</button>
+        </div>
+        <!-- Add Rule Form -->
+        <div id="addRuleForm" class="rule-form hidden">
+          <div class="rule-form-inner">
+            <h3 id="ruleFormTitle">New Map Remote Rule</h3>
+            <div class="form-row">
+              <label>Name</label>
+              <input
+                type="text"
+                id="ruleName"
+                placeholder="e.g. Dev Redirect"
+              />
+            </div>
+            <div class="form-group-title">From (Match)</div>
+            <div class="form-row form-row-5">
+              <div>
+                <label>Protocol</label
+                ><input
+                  type="text"
+                  id="fromProtocol"
+                  value="*"
+                  placeholder="http/https/*"
+                />
+              </div>
+              <div>
+                <label>Host</label
+                ><input type="text" id="fromHost" placeholder="localhost" />
+              </div>
+              <div>
+                <label>Port</label
+                ><input
+                  type="text"
+                  id="fromPort"
+                  value="*"
+                  placeholder="8888/*"
+                />
+              </div>
+              <div>
+                <label>Path</label
+                ><input
+                  type="text"
+                  id="fromPath"
+                  value=".*"
+                  placeholder="/api/.*"
+                />
+              </div>
+              <div>
+                <label>Query</label
+                ><input
+                  type="text"
+                  id="fromQuery"
+                  value="*"
+                  placeholder="page=.*"
+                />
+              </div>
+            </div>
+            <div class="form-group-title">To (Rewrite)</div>
+            <div class="form-row form-row-5">
+              <div>
+                <label>Protocol</label
+                ><input
+                  type="text"
+                  id="toProtocol"
+                  value="http"
+                  placeholder="http/https"
+                />
+              </div>
+              <div>
+                <label>Host</label
+                ><input type="text" id="toHost" placeholder="localhost" />
+              </div>
+              <div>
+                <label>Port</label
+                ><input
+                  type="text"
+                  id="toPort"
+                  value="*"
+                  placeholder="9090/*"
+                />
+              </div>
+              <div>
+                <label>Path</label
+                ><input type="text" id="toPath" value="*" placeholder="/api/" />
+              </div>
+              <div>
+                <label>Query</label
+                ><input type="text" id="toQuery" value="*" placeholder="*" />
+              </div>
+            </div>
+            <div class="form-actions">
+              <button class="btn-save" id="btnSaveRule">Save</button>
+              <button class="btn-cancel" id="btnCancelRule">Cancel</button>
+            </div>
+          </div>
+        </div>
+        <!-- Rules List -->
+        <div class="table-wrapper">
+          <table id="maprTable">
+            <thead>
+              <tr>
+                <th>Status</th>
+                <th>Name</th>
+                <th>From</th>
+                <th>To</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <!-- Hits List -->
+        <div class="toolbar" style="margin-top: 16px">
+          <span class="record-count" id="hitsCount">0 hits</span>
+        </div>
+        <div class="table-wrapper">
+          <table id="hitsTable">
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Rule</th>
+                <th>Method</th>
+                <th>Original URL</th>
+                <th>Rewritten URL</th>
+                <th>Trace ID</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <!-- Hit Detail Panel -->
+        <div
+          class="resize-handle hidden"
+          id="hitDetailResize"
+          data-panel="hitDetail"
+        ></div>
+        <div id="hitDetail" class="detail-panel hidden">
+          <div class="detail-body detail-split">
+            <button
+              class="detail-float-close"
+              onclick="closeDetail('hitDetail')"
+            >
+              &times;
+            </button>
+            <!-- Request 半区 -->
+            <div class="detail-pane">
+              <div class="detail-pane-tabs">
+                <button
+                  class="pane-tab active"
+                  data-pane-target="hitReqHeaders"
+                >
+                  Headers
+                </button>
+                <button class="pane-tab" data-pane-target="hitReqBody">
+                  Body
+                </button>
+                <div class="body-view-toggle hidden" id="hitReqBodyToggle">
+                  <button class="view-btn active" data-mode="auto">Auto</button>
+                  <button class="view-btn" data-mode="text">Text</button>
+                  <button class="view-btn" data-mode="hex">Hex</button>
+                </div>
+              </div>
+              <div class="detail-pane-content">
+                <pre id="hitReqHeaders" class="pane-content active"></pre>
+                <pre id="hitReqBody" class="pane-content"></pre>
+              </div>
+            </div>
+            <div class="detail-split-divider"></div>
+            <!-- Response 半区 -->
+            <div class="detail-pane">
+              <div class="detail-pane-tabs">
+                <button
+                  class="pane-tab active"
+                  data-pane-target="hitRespHeaders"
+                >
+                  Headers
+                </button>
+                <button class="pane-tab" data-pane-target="hitRespBody">
+                  Body
+                </button>
+                <div class="body-view-toggle hidden" id="hitRespBodyToggle">
+                  <button class="view-btn active" data-mode="auto">Auto</button>
+                  <button class="view-btn" data-mode="text">Text</button>
+                  <button class="view-btn" data-mode="hex">Hex</button>
+                </div>
+              </div>
+              <div class="detail-pane-content">
+                <pre id="hitRespHeaders" class="pane-content active"></pre>
+                <pre id="hitRespBody" class="pane-content"></pre>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Marked Tab -->
+      <div id="tab-marked" class="tab-panel">
+        <div class="toolbar">
+          <span class="record-count" id="markedCount">0 marked</span>
+        </div>
+        <div class="table-wrapper">
+          <table id="markedTable">
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Source</th>
+                <th>Summary</th>
+                <th>Note</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <!-- Marked Detail Panel -->
+        <div
+          class="resize-handle hidden"
+          id="markedDetailResize"
+          data-panel="markedDetail"
+        ></div>
+        <div id="markedDetail" class="detail-panel hidden">
+          <div class="detail-header">
+            <span class="detail-title">Marked Record Detail</span>
+            <button class="detail-close" onclick="closeDetail('markedDetail')">
+              &times;
+            </button>
+          </div>
+          <div class="detail-body">
+            <pre id="markedDetailContent"></pre>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- Right-click Context Menu -->
+    <div id="contextMenu" class="context-menu hidden">
+      <div class="context-menu-item" id="ctxMark">Mark</div>
+      <div class="context-menu-item" id="ctxMarkNote">Mark with Note...</div>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>

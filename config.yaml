@@ -1,0 +1,34 @@
+# =============================================================================
+# Dev-Sidecar Agent 配置文件
+# 所有配置项均有默认值，只需覆盖需要修改的部分即可
+# =============================================================================
+
+# MCP 通信配置（SSE 模式，Web Dashboard 与 MCP 共用端口）
+mcp:
+  # HTTP 监听端口，MCP SSE + Web Dashboard 共用此端口
+  port: "3000"
+
+# MITM 代理配置
+proxy:
+  # 代理服务器监听端口，浏览器/客户端需将 HTTP(S) 代理指向此端口
+  port: "8888"
+
+# 目标进程接管配置
+app:
+  # 目标程序启动命令（留空则不接管任何进程）
+  # 示例: "./my-target-service --port=8080"
+  command: ""
+  # 是否启用 Delve 调试模式（提供 Goroutine 栈追踪、变量求值、动态 Tracepoint 能力）
+  debug: false
+
+# Delve 调试器配置（仅 app.debug=true 时生效）
+delve:
+  # Delve Headless RPC 监听地址
+  listen_addr: "127.0.0.1:2345"
+
+# 存储容量配置（Ring Buffer 容量，超出后自动丢弃最旧记录）
+storage:
+  # L7 HTTP 流量记录容量
+  traffic_limit: 1000
+  # 目标进程业务日志容量
+  log_limit: 10000

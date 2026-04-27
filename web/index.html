@@ -164,21 +164,19 @@
                 ><input
                   type="text"
                   id="fromProtocol"
-                  value="*"
-                  placeholder="http/https/*"
+                  placeholder="留空匹配所有"
                 />
               </div>
               <div>
                 <label>Host</label
-                ><input type="text" id="fromHost" placeholder="localhost" />
+                ><input type="text" id="fromHost" placeholder="*.example.com" />
               </div>
               <div>
                 <label>Port</label
                 ><input
                   type="text"
                   id="fromPort"
-                  value="*"
-                  placeholder="8888/*"
+                  placeholder="留空匹配所有"
                 />
               </div>
               <div>
@@ -186,8 +184,7 @@
                 ><input
                   type="text"
                   id="fromPath"
-                  value=".*"
-                  placeholder="/api/.*"
+                  placeholder="/api/v3/*"
                 />
               </div>
               <div>
@@ -195,8 +192,7 @@
                 ><input
                   type="text"
                   id="fromQuery"
-                  value="*"
-                  placeholder="page=.*"
+                  placeholder="留空匹配所有"
                 />
               </div>
             </div>
@@ -207,30 +203,28 @@
                 ><input
                   type="text"
                   id="toProtocol"
-                  value="http"
-                  placeholder="http/https"
+                  placeholder="留空保持不变"
                 />
               </div>
               <div>
                 <label>Host</label
-                ><input type="text" id="toHost" placeholder="localhost" />
+                ><input type="text" id="toHost" placeholder="目标 Host" />
               </div>
               <div>
                 <label>Port</label
                 ><input
                   type="text"
                   id="toPort"
-                  value="*"
-                  placeholder="9090/*"
+                  placeholder="留空保持不变"
                 />
               </div>
               <div>
                 <label>Path</label
-                ><input type="text" id="toPath" value="*" placeholder="/api/" />
+                ><input type="text" id="toPath" placeholder="留空保持不变" />
               </div>
               <div>
                 <label>Query</label
-                ><input type="text" id="toQuery" value="*" placeholder="*" />
+                ><input type="text" id="toQuery" placeholder="留空保持不变" />
               </div>
             </div>
             <div class="form-actions">

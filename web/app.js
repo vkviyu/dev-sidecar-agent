@@ -11,6 +11,7 @@
   const REFRESH_INTERVAL = 3000; // ms
   let editingRuleId = null; // null=新增模式, 有值=编辑模式
   let cachedRules = []; // 缓存规则列表供编辑时查找
+  let streamingTimer = null; // SSE 流式详情刷新定时器
 
   // ---- DOM Ready ----
   document.addEventListener("DOMContentLoaded", init);
@@ -305,12 +306,19 @@
         const shortUrl = truncate(rec.url, 80);
         const shortTrace = rec.trace_id || "-";
 
+        const statusCol = rec.streaming
+          ? '<span class="streaming-indicator">&#9679; streaming</span>'
+          : `<span class="status-badge ${statusClass}">${rec.resp_status || "-"}</span>`;
+        const durationCol = rec.streaming
+          ? "-"
+          : `<span class="duration ${durationClass}">${rec.duration_ms != null ? rec.duration_ms + "ms" : "-"}</span>`;
+
         return `<tr class="clickable" data-index="${records.length - 1 - i}" data-trace-id="${rec.trace_id || ""}">
         <td>${time}</td>
         <td><span class="method-badge method-${rec.method}">${rec.method}</span></td>
         <td class="url-cell" title="${escapeHtml(rec.url)}">${escapeHtml(shortUrl)}</td>
-        <td><span class="status-badge ${statusClass}">${rec.resp_status || "-"}</span></td>
-        <td><span class="duration ${durationClass}">${rec.duration_ms != null ? rec.duration_ms + "ms" : "-"}</span></td>
+        <td>${statusCol}</td>
+        <td>${durationCol}</td>
         <td><span class="trace-id" title="${rec.trace_id || ""}">${shortTrace}</span></td>
       </tr>`;
       })
@@ -350,6 +358,39 @@
 
     showPanel("trafficDetail");
     stopAutoRefresh();
+
+    // SSE 流实时刷新：streaming 中的记录持续轮询更新 resp_body
+    stopStreamingRefresh();
+    if (rec.streaming && rec.trace_id) {
+      startStreamingRefresh(rec.trace_id);
+    }
+  }
+
+  function startStreamingRefresh(traceId) {
+    streamingTimer = setInterval(async () => {
+      const data = await fetchJSON(`/api/traffic?trace_id=${traceId}`);
+      if (!data || data.length === 0) return;
+      const rec = data[0];
+      // 更新 resp_body 显示
+      const respCt = getContentType(rec.resp_headers);
+      renderBodyWithToggle(
+        "trafficRespBody",
+        "trafficRespBodyToggle",
+        rec.resp_body,
+        respCt,
+      );
+      // 流结束时停止刷新，恢复列表自动刷新
+      if (!rec.streaming) {
+        stopStreamingRefresh();
+      }
+    }, 500);
+  }
+
+  function stopStreamingRefresh() {
+    if (streamingTimer) {
+      clearInterval(streamingTimer);
+      streamingTimer = null;
+    }
   }
 
   // ---- Logs Tab ----
@@ -425,12 +466,12 @@
   }
 
   function formatLocation(loc) {
-    if (!loc) return "*";
+    if (!loc) return "*://*:*/*";
     const proto = loc.protocol || "*";
     const host = loc.host || "*";
     const port = loc.port || "*";
-    const path = loc.path || "*";
-    const query = loc.query || "";
+    const path = loc.path || "/*";
+    const query = loc.query;
     if (query && query !== "*") {
       return `${proto}://${host}:${port}${path}?${query}`;
     }
@@ -529,16 +570,16 @@
       "New Map Remote Rule";
     // Reset form
     document.getElementById("ruleName").value = "";
-    document.getElementById("fromProtocol").value = "*";
+    document.getElementById("fromProtocol").value = "";
     document.getElementById("fromHost").value = "";
-    document.getElementById("fromPort").value = "*";
-    document.getElementById("fromPath").value = ".*";
-    document.getElementById("fromQuery").value = "*";
-    document.getElementById("toProtocol").value = "http";
+    document.getElementById("fromPort").value = "";
+    document.getElementById("fromPath").value = "";
+    document.getElementById("fromQuery").value = "";
+    document.getElementById("toProtocol").value = "";
     document.getElementById("toHost").value = "";
-    document.getElementById("toPort").value = "*";
-    document.getElementById("toPath").value = "*";
-    document.getElementById("toQuery").value = "*";
+    document.getElementById("toPort").value = "";
+    document.getElementById("toPath").value = "";
+    document.getElementById("toQuery").value = "";
   }
 
   async function saveRule() {
@@ -552,18 +593,18 @@
       enable: true,
       name: name,
       from: {
-        protocol: document.getElementById("fromProtocol").value.trim() || "*",
-        host: document.getElementById("fromHost").value.trim() || "*",
-        port: document.getElementById("fromPort").value.trim() || "*",
-        path: document.getElementById("fromPath").value.trim() || ".*",
-        query: document.getElementById("fromQuery").value.trim() || "",
+        protocol: document.getElementById("fromProtocol").value.trim(),
+        host: document.getElementById("fromHost").value.trim(),
+        port: document.getElementById("fromPort").value.trim(),
+        path: document.getElementById("fromPath").value.trim(),
+        query: document.getElementById("fromQuery").value.trim(),
       },
       to: {
-        protocol: document.getElementById("toProtocol").value.trim() || "http",
-        host: document.getElementById("toHost").value.trim() || "localhost",
-        port: document.getElementById("toPort").value.trim() || "*",
-        path: document.getElementById("toPath").value.trim() || "*",
-        query: document.getElementById("toQuery").value.trim() || "",
+        protocol: document.getElementById("toProtocol").value.trim(),
+        host: document.getElementById("toHost").value.trim(),
+        port: document.getElementById("toPort").value.trim(),
+        path: document.getElementById("toPath").value.trim(),
+        query: document.getElementById("toQuery").value.trim(),
       },
     };
 
@@ -1019,7 +1060,9 @@
 
   // ---- Expose to HTML ----
   window.closeDetail = function (id) {
+    stopStreamingRefresh();
     hidePanel(id);
+    startAutoRefresh();
   };
   window.deleteRule = deleteRule;
   window.toggleRule = toggleRule;
@@ -1046,22 +1089,22 @@
     // 填充表单
     document.getElementById("ruleName").value = rule.name || "";
     document.getElementById("fromProtocol").value =
-      (rule.from && rule.from.protocol) || "*";
+      (rule.from && rule.from.protocol) || "";
     document.getElementById("fromHost").value =
       (rule.from && rule.from.host) || "";
     document.getElementById("fromPort").value =
-      (rule.from && rule.from.port) || "*";
+      (rule.from && rule.from.port) || "";
     document.getElementById("fromPath").value =
-      (rule.from && rule.from.path) || ".*";
+      (rule.from && rule.from.path) || "";
     document.getElementById("fromQuery").value =
-      (rule.from && rule.from.query) || "*";
+      (rule.from && rule.from.query) || "";
     document.getElementById("toProtocol").value =
-      (rule.to && rule.to.protocol) || "http";
+      (rule.to && rule.to.protocol) || "";
     document.getElementById("toHost").value = (rule.to && rule.to.host) || "";
-    document.getElementById("toPort").value = (rule.to && rule.to.port) || "*";
-    document.getElementById("toPath").value = (rule.to && rule.to.path) || "*";
+    document.getElementById("toPort").value = (rule.to && rule.to.port) || "";
+    document.getElementById("toPath").value = (rule.to && rule.to.path) || "";
     document.getElementById("toQuery").value =
-      (rule.to && rule.to.query) || "*";
+      (rule.to && rule.to.query) || "";
 
     document.getElementById("addRuleForm").classList.remove("hidden");
   }

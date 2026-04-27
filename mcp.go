@@ -809,8 +809,7 @@ func handleAddMarkedRecord(ctx context.Context, request mcp.CallToolRequest) (*m
 	case "traffic":
 		for _, rec := range store.GetAll() {
 			if rec.TraceID == sourceID {
-				cp := *rec
-				snapshot = &cp
+				snapshot = rec
 				break
 			}
 		}

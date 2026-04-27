@@ -318,8 +318,7 @@ func handleAPIMarked(w http.ResponseWriter, r *http.Request) {
 		case "traffic":
 			for _, rec := range store.GetAll() {
 				if rec.TraceID == req.SourceID {
-					cp := *rec
-					snapshot = &cp
+					snapshot = rec
 					break
 				}
 			}

@@ -47,6 +47,8 @@ type TLSDetail struct {
 }
 
 type TrafficRecord struct {
+	mu             sync.RWMutex        `json:"-"`
+	Streaming      bool                `json:"streaming"`
 	TraceID        string              `json:"trace_id"`
 	Method         string              `json:"method"`
 	URL            string              `json:"url"`
@@ -67,6 +69,14 @@ type TrafficRecord struct {
 	Timing         *TimingDetail       `json:"timing"`
 	TLS            *TLSDetail          `json:"tls,omitempty"`
 	Timestamp      time.Time           `json:"timestamp"`
+}
+
+// MarshalJSON 序列化时自动加读锁，保护 Streaming 期间 RespBody 的并发读写安全
+func (r *TrafficRecord) MarshalJSON() ([]byte, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	type Alias TrafficRecord
+	return json.Marshal((*Alias)(r))
 }
 
 // 线程安全的全局流量存储
@@ -200,7 +210,25 @@ func (s *MarkedStore) Remove(id string) bool {
 // markedStore 全局标记记录存储
 var markedStore *MarkedStore
 
-// Location 描述一个流量匹配端点 (对标 Charles 的 Edit Map Remote 弹窗)
+// fieldMatchesAny 判断字段值是否表示"匹配所有"（留空、* 或旧版 .*）
+func fieldMatchesAny(v string) bool {
+	return v == "" || v == "*" || v == ".*"
+}
+
+// wildcardToRegex 将通配符模式转为正则表达式（仅支持 * 通配符）
+// 示例: "*.example.com" → ".*\.example\.com"
+//
+//	"/api/v3/*"       → "/api/v3/.*"
+//	"172.26.201.230"  → "172\.26\.201\.230"
+func wildcardToRegex(pattern string) string {
+	parts := strings.Split(pattern, "*")
+	for i, p := range parts {
+		parts[i] = regexp.QuoteMeta(p)
+	}
+	return strings.Join(parts, ".*")
+}
+
+// Location 描述一个流量匹配端点 (对标 Charles 的 Map Remote)
 type Location struct {
 	Protocol string `json:"protocol" yaml:"protocol"` // "http", "https", 或者 "*"
 	Host     string `json:"host"     yaml:"host"`     // 支持确切域名或正则 (如 `.*\.production\.com`)
@@ -253,28 +281,29 @@ func (e *MapRemoteEngine) MatchAndRewrite(r *http.Request, method, traceID strin
 			continue
 		}
 
-		// 1. 协议匹配
-		if rule.From.Protocol != "*" && rule.From.Protocol != origProtocol {
+		// 1. Protocol: 留空或 * 匹配所有，否则精确匹配
+		if !fieldMatchesAny(rule.From.Protocol) && rule.From.Protocol != origProtocol {
 			continue
 		}
-		// 2. 端口匹配
-		if rule.From.Port != "*" && rule.From.Port != origPort {
+		// 2. Port: 留空或 * 匹配所有，否则精确匹配
+		if !fieldMatchesAny(rule.From.Port) && rule.From.Port != origPort {
 			continue
 		}
-		// 3. Host 匹配 (使用正则)
-		hostMatched, _ := regexp.MatchString("^"+rule.From.Host+"$", origHost)
-		if rule.From.Host != "*" && !hostMatched {
-			continue
+		// 3. Host: 留空或 * 匹配所有，否则通配符匹配
+		if !fieldMatchesAny(rule.From.Host) {
+			if matched, _ := regexp.MatchString("^"+wildcardToRegex(rule.From.Host)+"$", origHost); !matched {
+				continue
+			}
 		}
-		// 4. Path 匹配 (支持正则或前缀匹配)
-		pathMatched, _ := regexp.MatchString("^"+rule.From.Path, origPath)
-		if rule.From.Path != "*" && !pathMatched {
-			continue
+		// 4. Path: 留空或 * 匹配所有，否则前缀匹配（通配符）
+		if !fieldMatchesAny(rule.From.Path) {
+			if matched, _ := regexp.MatchString("^"+wildcardToRegex(rule.From.Path), origPath); !matched {
+				continue
+			}
 		}
-		// 5. Query 匹配 (支持正则)
-		if rule.From.Query != "" && rule.From.Query != "*" {
-			queryMatched, _ := regexp.MatchString(rule.From.Query, origQuery)
-			if !queryMatched {
+		// 5. Query: 留空或 * 匹配所有，否则通配符匹配
+		if !fieldMatchesAny(rule.From.Query) {
+			if matched, _ := regexp.MatchString(wildcardToRegex(rule.From.Query), origQuery); !matched {
 				continue
 			}
 		}
@@ -283,18 +312,18 @@ func (e *MapRemoteEngine) MatchAndRewrite(r *http.Request, method, traceID strin
 
 		log.Printf("[Map Remote 命中] 规则: %s | 原URL: %s", rule.Name, origURL)
 
-		// 替换协议
-		if rule.To.Protocol != "" && rule.To.Protocol != "*" {
+		// 替换协议（留空 = 保持不变）
+		if !fieldMatchesAny(rule.To.Protocol) {
 			r.URL.Scheme = rule.To.Protocol
 		}
 
-		// 替换 Host 和 Port
+		// 替换 Host 和 Port（留空 = 保持不变）
 		newHost := origHost
-		if rule.To.Host != "" && rule.To.Host != "*" {
+		if !fieldMatchesAny(rule.To.Host) {
 			newHost = rule.To.Host
 		}
 		newPort := origPort
-		if rule.To.Port != "" && rule.To.Port != "*" {
+		if !fieldMatchesAny(rule.To.Port) {
 			newPort = rule.To.Port
 		}
 
@@ -306,20 +335,21 @@ func (e *MapRemoteEngine) MatchAndRewrite(r *http.Request, method, traceID strin
 		}
 		r.Host = r.URL.Host // 必须同步修改 http 头的 Host 字段
 
-		// 替换 Path (路径前缀替换)
-		if rule.To.Path != "" && rule.To.Path != "*" {
-			re := regexp.MustCompile("^" + rule.From.Path)
-			r.URL.Path = re.ReplaceAllString(origPath, rule.To.Path)
+		// 替换 Path（留空 = 保持不变）
+		if !fieldMatchesAny(rule.To.Path) {
+			if !fieldMatchesAny(rule.From.Path) {
+				// From.Path 有值：做前缀替换
+				re := regexp.MustCompile("^" + wildcardToRegex(rule.From.Path))
+				r.URL.Path = re.ReplaceAllString(origPath, rule.To.Path)
+			} else {
+				// From.Path 为空：整体替换
+				r.URL.Path = rule.To.Path
+			}
 		}
 
-		// 替换 Query
-		if rule.To.Query != "" && rule.To.Query != "*" {
-			if rule.From.Query != "" && rule.From.Query != "*" {
-				re := regexp.MustCompile(rule.From.Query)
-				r.URL.RawQuery = re.ReplaceAllString(origQuery, rule.To.Query)
-			} else {
-				r.URL.RawQuery = rule.To.Query
-			}
+		// 替换 Query（留空 = 保持不变）
+		if !fieldMatchesAny(rule.To.Query) {
+			r.URL.RawQuery = rule.To.Query
 		}
 
 		// 记录命中到 HitStore
@@ -453,7 +483,8 @@ func (e *MapRemoteEngine) UpdateRule(rule MapRemoteRule) bool {
 
 // recordingBody 包装 resp.Body 实现流式转发+记录。
 // goproxy 驱动 io.Copy 时，每次 Read 同时捕获数据副本到 buf；
-// 流结束（EOF/Close）时通过 finalize 保存 TrafficRecord。
+// 首次 Read 时立即将 record 入库（Streaming=true），后续 Read 实时更新 RespBody；
+// 流结束（EOF/Close）时 finalize 标记 Streaming=false 并写入最终时序。
 type recordingBody struct {
 	original  io.ReadCloser
 	buf       bytes.Buffer
@@ -461,12 +492,25 @@ type recordingBody struct {
 	startTime time.Time
 	gotFirst  *time.Time // 指向 httptrace GotFirstResponseByte 时间
 	once      sync.Once
+	added     bool // 是否已入库
 }
 
 func (rb *recordingBody) Read(p []byte) (int, error) {
 	n, err := rb.original.Read(p)
 	if n > 0 {
 		rb.buf.Write(p[:n])
+		// 实时更新 record（加写锁保护并发读取安全）
+		rb.record.mu.Lock()
+		rb.record.RespBody = rb.buf.String()
+		rb.record.RespSize = int64(rb.buf.Len())
+		rb.record.mu.Unlock()
+
+		// 首次收到数据时立即入库，Dashboard 可以立刻看到这条记录
+		if !rb.added {
+			rb.added = true
+			rb.record.Streaming = true
+			store.Add(rb.record)
+		}
 	}
 	if err != nil {
 		rb.finalize()
@@ -482,8 +526,10 @@ func (rb *recordingBody) Close() error {
 func (rb *recordingBody) finalize() {
 	rb.once.Do(func() {
 		now := time.Now()
+		rb.record.mu.Lock()
 		rb.record.RespBody = rb.buf.String()
 		rb.record.RespSize = int64(rb.buf.Len())
+		rb.record.Streaming = false
 		rb.record.DurationMs = now.Sub(rb.startTime).Milliseconds()
 		if rb.record.Timing != nil {
 			rb.record.Timing.TotalMs = rb.record.DurationMs
@@ -491,10 +537,31 @@ func (rb *recordingBody) finalize() {
 				rb.record.Timing.TransferMs = now.Sub(*rb.gotFirst).Milliseconds()
 			}
 		}
-		store.Add(rb.record)
-		log.Printf("[抓包落库] %s %s | 耗时: %dms | Status: %d",
-			rb.record.Method, rb.record.URL, rb.record.DurationMs, rb.record.RespStatus)
+		rb.record.mu.Unlock()
+		// 极端情况：从未被 Read 过（如空 Body 立即 Close），兜底入库
+		if !rb.added {
+			store.Add(rb.record)
+		}
 	})
+}
+
+// isLocalAddress 判断给定的 host 是否指向本机（用于自循环检测）
+func isLocalAddress(host string) bool {
+	if host == "localhost" || host == "127.0.0.1" || host == "::1" {
+		return true
+	}
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return false
+	}
+	for _, addr := range addrs {
+		if ipNet, ok := addr.(*net.IPNet); ok {
+			if ipNet.IP.String() == host {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func startProxy() {
@@ -589,14 +656,48 @@ func startProxy() {
 		// Map Remote: 流量劫持与路由重写
 		routeEngine.MatchAndRewrite(r, r.Method, traceID)
 
-		// 注意：不再注入 X-Dev-Trace-Id Header，请求零修改转发到后端
+		// 自循环保护：如果 Map Remote 之后 URL 仍指向代理自身，立即返回错误，防止无限循环
+		targetPort := r.URL.Port()
+		if targetPort == "" {
+			if r.URL.Scheme == "https" {
+				targetPort = "443"
+			} else {
+				targetPort = "80"
+			}
+		}
+		targetHost := r.URL.Hostname()
+		proxyPort := appConfig.Proxy.Port
+		if targetPort == proxyPort && isLocalAddress(targetHost) {
+			log.Printf("[Map Remote] 自循环检测: %s 仍指向代理自身，返回 502", r.URL.String())
+			record.RespStatus = 502
+			record.RespStatusText = "502 Bad Gateway"
+			record.RespBody = fmt.Sprintf("Map Remote 未命中或重写后仍指向代理自身 (%s)，请检查规则配置", r.URL.Host)
+			record.DurationMs = time.Since(startTime).Milliseconds()
+			store.Add(record)
+			return r, goproxy.NewResponse(r, "text/plain", http.StatusBadGateway, record.RespBody)
+		}
 
 		return r, nil
 	})
 
 	// --- 拦截响应：提取头部信息，用 recordingBody 流式转发+记录 ---
 	proxy.OnResponse().DoFunc(func(resp *http.Response, ctx *goproxy.ProxyCtx) *http.Response {
-		if resp == nil || ctx.UserData == nil {
+		if ctx.UserData == nil {
+			return resp
+		}
+
+		// 目标服务不可达（连接拒绝、DNS 失败等）：resp 为 nil，仍需记录请求信息
+		if resp == nil {
+			userData := ctx.UserData.(map[string]interface{})
+			record := userData["record"].(*TrafficRecord)
+			startTime := userData["start_time"].(time.Time)
+			record.DurationMs = time.Since(startTime).Milliseconds()
+			record.RespStatus = 502
+			record.RespStatusText = "502 Bad Gateway"
+			if ctx.Error != nil {
+				record.RespBody = ctx.Error.Error()
+			}
+			store.Add(record)
 			return resp
 		}
 
@@ -675,8 +776,6 @@ func startProxy() {
 			record.DurationMs = time.Since(startTime).Milliseconds()
 			timing.TotalMs = record.DurationMs
 			store.Add(record)
-			log.Printf("[抓包落库] %s %s | 耗时: %dms | Status: %d",
-				record.Method, record.URL, record.DurationMs, record.RespStatus)
 		}
 
 		return resp
